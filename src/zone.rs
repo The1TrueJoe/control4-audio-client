@@ -62,7 +62,10 @@ pub struct Session {
 impl Session {
     /// Parses the serialized `session_cmd` GstStructure the streamer sends.
     pub fn parse(s: &str) -> Result<Self, String> {
-        let st = gst::Structure::from_str(s.trim()).map_err(|_| "session is not a valid structure".to_string())?;
+        // Control4's streamer sends the structure wrapped in double quotes.
+        let s = s.trim();
+        let s = s.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(s);
+        let st = gst::Structure::from_str(s).map_err(|_| "session is not a valid structure".to_string())?;
         let int = |k: &str| st.get::<i32>(k).ok();
         let port_of = |k: &str| int(k).and_then(|p| u16::try_from(p).ok()).filter(|p| *p != 0);
         let cmd = int("cmd").ok_or("session has no cmd")?;
@@ -323,20 +326,24 @@ impl Zone {
             out.set_property("ts-offset", self.cfg.offset_ms * 1_000_000);
         }
 
-        // Play on Control4's clock: the stream clock if named, else the master on the streamer's host.
-        let (host, port) = s
-            .sclock
-            .rsplit_once(':')
-            .and_then(|(h, p)| Some((h.to_string(), p.parse::<u16>().ok()?)))
-            .unwrap_or((peer.to_string(), NETCLOCK_PORT));
-        let clock = gst_net::NetClientClock::new(None, &host, i32::from(port), gst::ClockTime::ZERO);
-        if clock.wait_for_sync(gst::ClockTime::from_seconds(5)).is_err() {
-            eprintln!("zone {}: clock {host}:{port} did not sync, playing anyway", self.cfg.port);
-        }
-        pipeline.use_clock(Some(&clock));
-        if let Some(b) = s.btime {
-            pipeline.set_base_time(gst::ClockTime::from_nseconds(b));
-            pipeline.set_start_time(gst::ClockTime::NONE);
+        // Play on Control4's clock: the stream clock if named, else the master on the
+        // streamer's host. The base time only means something on that clock, so with no
+        // clock synced it is dropped: the zone still plays, just not in step with others.
+        let sclock = s.sclock.rsplit_once(':').and_then(|(h, p)| Some((h.to_string(), p.parse::<u16>().ok()?)));
+        let synced = sclock.into_iter().chain([(peer.to_string(), NETCLOCK_PORT)]).find_map(|(host, port)| {
+            let clock = gst_net::NetClientClock::new(None, &host, i32::from(port), gst::ClockTime::ZERO);
+            let ok = clock.wait_for_sync(gst::ClockTime::from_seconds(3)).is_ok();
+            eprintln!("zone {}: clock {host}:{port} {}", self.cfg.port, if ok { "synced" } else { "did not sync" });
+            ok.then_some(clock)
+        });
+        match (synced, s.btime) {
+            (Some(clock), Some(b)) => {
+                pipeline.use_clock(Some(&clock));
+                pipeline.set_base_time(gst::ClockTime::from_nseconds(b));
+                pipeline.set_start_time(gst::ClockTime::NONE);
+            }
+            (Some(clock), None) => pipeline.use_clock(Some(&clock)),
+            (None, _) => eprintln!("zone {}: no Control4 clock; playing unsynchronised", self.cfg.port),
         }
 
         let bus = self.watch(pipeline.bus().expect("pipeline has a bus"));
@@ -394,6 +401,13 @@ mod tests {
         .unwrap();
         assert_eq!((s.cmd, s.port, s.rtcp, s.btime), (0, 6200, 7001, Some(123456789)));
         assert_eq!((s.sclock.as_str(), s.mcast.as_str()), ("10.0.0.2:7002", "239.1.1.1:7000"));
+
+        // Verbatim from a live Control4 OS 3.3 streamer.
+        let live = Session::parse(
+            "\"session_cmd, cmd=(int)0, port=(int)6200, rtcp=(int)6003, btime=(guint64)18446744073709551615, sclock=(string)10.0.0.2:6004;\"",
+        )
+        .unwrap();
+        assert_eq!((live.port, live.rtcp, live.btime, live.sclock.as_str()), (6200, 6003, None, "10.0.0.2:6004"));
 
         let stop = Session::parse("session_cmd, cmd=(int)2, port=(int)6201").unwrap();
         assert_eq!((stop.cmd, stop.port, stop.rtcp, stop.btime), (2, 6201, 0, None));

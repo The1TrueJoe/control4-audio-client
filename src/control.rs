@@ -1,5 +1,6 @@
 //! The TCP control channel Control4's streamer drives (port 6100). IMAP-style lines:
-//! `<tag> <cmd> [args]` answered by `<tag> OK [data]`, `<tag> NO <msg>` or `<tag> BAD <cmd> <msg>`.
+//! `<tag> <cmd> [args]`, answered by optional `<tag> <cmd> <data>` lines and then
+//! `<tag> OK <cmd>`, `<tag> NO <cmd>` or `<tag> BAD <cmd> <msg>`.
 
 use crate::zone::{Session, Zones};
 use std::net::IpAddr;
@@ -88,9 +89,11 @@ pub async fn handle(line: &str, peer: IpAddr, zones: &Arc<Zones>) -> String {
         "ramp" => zone().map(|z| z.ramp(args.get(1).copied().unwrap_or("OFF"))).map(|_| String::new()),
         _ => return format!("{tag} BAD {cmd} unknown command"),
     };
+    // Control4's convention, seen on a live stream server: data lines `<tag> <cmd> <data>`,
+    // then the status line `<tag> OK|NO <cmd>`.
     match result {
-        Ok(d) if d.is_empty() => format!("{tag} OK"),
-        Ok(d) => format!("{tag} OK {d}"),
-        Err(e) => format!("{tag} NO {e}"),
+        Ok(d) if d.is_empty() => format!("{tag} OK {cmd}"),
+        Ok(d) => format!("{tag} {cmd} {d}\r\n{tag} OK {cmd}"),
+        Err(e) => format!("{tag} {cmd} {e}\r\n{tag} NO {cmd}"),
     }
 }

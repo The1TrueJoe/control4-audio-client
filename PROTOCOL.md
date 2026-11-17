@@ -33,12 +33,16 @@ Tagged lines, in the style of IMAP:
 
 ```
 -> <tag> <command> [args...]\r\n        args separated by single spaces
-<- <tag> OK [data]\r\n                 success
-<- <tag> NO <message>\r\n              understood, but failed
+<- <tag> <command> <data>\r\n          zero or more data lines
+<- <tag> OK <command>\r\n              success
+<- <tag> NO <command>\r\n              understood, but failed (the data line says why)
 <- <tag> BAD <command> <message>\r\n   unknown command or wrong arguments
-<- * BAD <message>\r\n                 line without a tag and a command
 <- * SYS <EVENT>=...\r\n               unsolicited event
 ```
+
+For example, from a live stream server: `q1 status` is answered by
+`q1 status Audio Server 3.3.0...` and then `q1 OK status`; `q1 ping` by `q1 OK ping`.
+The stream server (TCP 6000) and the endpoint (TCP 6100) use the same convention.
 
 Commands are case-insensitive. The streamer sends `PING` as a keepalive and expects
 a reply within about 10 s. Message text after `OK`/`NO`/`BAD` is free-form.
@@ -64,13 +68,15 @@ commands. Replying `OK` to the rest is enough.
 
 ### `session`
 
-The argument is a serialized GstStructure (`gst_structure_from_string` parses it):
+The argument is a serialized GstStructure wrapped in double quotes. Verbatim from a
+live controller:
 
 ```
-session_cmd, cmd=(int)0, port=(int)6200, rtcp=(int)<streamer rtcp port>,
-             btime=(guint64)<pipeline base time, ns>, sclock=(string)"<host>:<port>"
-             [, mcast=(string)"<group>:<port>"]
+4 session "session_cmd, cmd=(int)0, port=(int)6200, rtcp=(int)6003, btime=(guint64)18446744073709551615, sclock=(string)10.0.0.2:6004;"
 ```
+
+`btime` of all ones means no base time. `sclock` is `host:port`. An optional
+`mcast=(string)"<group>:<port>"` selects multicast.
 
 | `cmd` | meaning | fields |
 |---|---|---|
@@ -80,8 +86,10 @@ session_cmd, cmd=(int)0, port=(int)6200, rtcp=(int)<streamer rtcp port>,
 | 5 | stop announcement | port |
 
 A play for a port that is already playing replaces the old stream. The endpoint
-answers `<tag> OK session_reply;` (a serialized, possibly empty, `session_reply`
-structure).
+answers with the data line `<tag> session session_reply;` (an empty `session_reply`
+structure) and then `<tag> OK session`.
+
+The streamer sends `PING` about every 10 s on the same connection.
 
 ## Media
 
@@ -106,8 +114,11 @@ now-playing information (service, queue) are not in the stream.
 
 Standard GStreamer network-synchronised playback:
 
-- The clock protocol is `GstNetTimeProvider`: 16-byte UDP packets carrying two
-  big-endian u64 nanosecond timestamps.
+- The clock protocol is `GstNetTimeProvider`. Requests are the standard 16 bytes
+  (two big-endian u64 nanosecond timestamps); Control4's master clock answers with
+  20: the same 16 plus a 4-byte trailer. Stock `GstNetClientClock` syncs to it.
+- On a live controller the per-stream `sclock` port did not answer at all, so this
+  client falls back to the master clock on Director's host, port 6002.
 - The endpoint sets its pipeline clock to a `GstNetClientClock` on `sclock` (or
   Director's host :6002 when `sclock` is absent), sets the base time to `btime` and
   the start time to none, and plays once the clock is synced.
@@ -127,9 +138,25 @@ Director streams to a project device whose driver declares:
 `driver/` is an example. Still unconfirmed: whether Director treats a third-party
 driver with this shape the same way as Control4's own devices.
 
-## Still to confirm on the wire
+## The stream server (TCP 6000)
 
-1. Which UDP port the endpoint receives RTP on. This client assumes the session's
-   `port` itself.
-2. What, if anything, the streamer reads from `session_reply`.
-3. The exact `sclock` format (assumed `host:port`).
+Same line protocol. `help` lists its commands, including `getstr`, `getsta SID`,
+`addstr`, `addmed SID URL`, `setsta SID PLAY|PAUSE`, `addcli SID HOST PORT`,
+`remcli SID HOST PORT` and `status`. `addcli` makes the stream's streamer connect to
+`HOST:6100`, send `session` for `PORT`, and send RTP to `HOST:PORT`, which is a
+handy way to test an endpoint by hand.
+
+## Confirmed on a live controller (OS 3.3)
+
+- SDDP discovery binds the driver, and Director's driver connection on 6100 works.
+- `addcli` → `session` → RTP to `HOST:PORT` → audio out, using a stream created
+  with `addstr`/`addmed`.
+- The reply format, the quoted session argument, the `sclock` format, and master
+  clock sync.
+
+## Still open
+
+1. Director does not yet add this endpoint to a stream by itself. With a room's
+   endpoint set to the demo driver, Digital Media created a stream but never
+   loaded a source or subscribed the endpoint.
+2. Whether `btime` is on the master clock's timeline or only the stream clock's.

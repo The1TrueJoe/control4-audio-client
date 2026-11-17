@@ -24,8 +24,8 @@ assert(sent[#sent] == "d3 setvol 6200 100 100\r\n", "volume clamps to 100")
 -- getvol reply, split across two network reads, reports back to the proxy.
 OnConnectionStatusChanged(6001, 6100, "ONLINE") -- sends vers (d4) then getvol/getmut per output (d5..)
 assert(props.Status == "ONLINE (10.0.0.9:6100)")
-ReceivedFromNetwork(6001, 6100, "d5 OK 4")
-ReceivedFromNetwork(6001, 6100, "2\r\nd6 OK ON\r\n")
+ReceivedFromNetwork(6001, 6100, "d5 getvol 4")
+ReceivedFromNetwork(6001, 6100, "2\r\nd5 OK getvol\r\nd6 getmut ON\r\nd6 OK getmut\r\n")
 local n = #notified
 assert(notified[n - 1].cmd == "VOLUME_LEVEL_CHANGED" and notified[n - 1].params.LEVEL == 42)
 assert(notified[n].cmd == "MUTE_CHANGED" and notified[n].params.MUTE == "True")

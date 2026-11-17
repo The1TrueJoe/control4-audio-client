@@ -64,19 +64,20 @@ local function refresh()
   end
 end
 
--- Replies: "<tag> OK [data]", "<tag> NO <msg>", "<tag> BAD <cmd> <msg>".
+-- Replies (Control4's convention): data lines "<tag> <cmd> <data>", then the status
+-- line "<tag> OK <cmd>", "<tag> NO <cmd>" or "<tag> BAD <cmd> <msg>".
 local function onLine(line)
   prop("Last Reply", line)
   dbg("< " .. line)
-  local t, status, data = line:match("^(%S+)%s+(%S+)%s*(.*)$")
+  local t, word, rest = line:match("^(%S+)%s+(%S+)%s*(.*)$")
   local req = t and pending[t]
   if not req then return end
-  pending[t] = nil
-  if status ~= "OK" then return end
-  if req.kind == "vol" and tonumber(data) then
-    volume[req.output] = tonumber(data); reportVolume(req.output)
+  if word == "OK" or word == "NO" or word == "BAD" then
+    pending[t] = nil
+  elseif req.kind == "vol" and tonumber(rest) then
+    volume[req.output] = tonumber(rest); reportVolume(req.output)
   elseif req.kind == "mut" then
-    muted[req.output] = (data == "ON"); reportMute(req.output)
+    muted[req.output] = (rest == "ON"); reportMute(req.output)
   end
 end
 

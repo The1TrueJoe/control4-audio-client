@@ -1,6 +1,5 @@
 mod api;
 mod control;
-mod sddp;
 mod zone;
 
 use serde::Deserialize;
@@ -41,6 +40,31 @@ fn default_sddp() -> bool {
     true
 }
 
+/// SDDP Type the driver's `<search_types>` lists (driver/driver.xml).
+const SDDP_TYPE: &str = "c4ac:audio_client";
+
+/// Announce over SDDP so Director pairs the box with the driver and fills in its address.
+async fn announce(host: String) -> Option<sddp::Announcer> {
+    let started = sddp::Announcer::builder(host.clone(), SDDP_TYPE)
+        .primary_proxy("avswitch")
+        .proxies(["avswitch"])
+        .manufacturer("Open Source")
+        .model("c4-audio-client")
+        .driver("c4-audio-client.c4z")
+        .start()
+        .await;
+    match started {
+        Ok(a) => {
+            eprintln!("sddp announcing {SDDP_TYPE} as {host} on {}", a.interface());
+            Some(a)
+        }
+        Err(e) => {
+            eprintln!("sddp disabled: {e}");
+            None
+        }
+    }
+}
+
 fn hostname() -> String {
     std::process::Command::new("hostname")
         .output()
@@ -57,9 +81,8 @@ async fn main() -> anyhow::Result<()> {
     let cfg: Config = toml::from_str(&std::fs::read_to_string(&path)?)?;
     anyhow::ensure!(!cfg.zones.is_empty(), "{path}: no [[zone]] configured");
     gst::init()?;
-    if cfg.sddp {
-        sddp::spawn(cfg.name.unwrap_or_else(hostname));
-    }
+    // Kept alive for the life of the process; dropping it sends NOTIFY OFFLINE.
+    let _announcer = if cfg.sddp { announce(cfg.name.unwrap_or_else(hostname)).await } else { None };
     let zones = Arc::new(zone::Zones::new(cfg.zones, cfg.latency_ms));
     tokio::select! {
         r = control::serve(cfg.control, zones.clone()) => r,

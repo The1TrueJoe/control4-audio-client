@@ -59,7 +59,7 @@ try:
         f"a1 session session_cmd, cmd=(int)0, port=(int)6200, rtcp=(int)16201, "
         f'btime=(guint64){base}, sclock=(string)"127.0.0.1:16002"'
     )
-    assert r == "a1 OK session_reply;", r
+    assert r == "a1 session session_reply;" and f.readline().rstrip("\r\n") == "a1 OK session", r
     for _ in range(50):
         z = zone()
         if z["now_playing"].get("title"):
@@ -68,10 +68,10 @@ try:
     assert z["playing"] and z["now_playing"].get("title") == "Test Tone", z
     assert z["now_playing"].get("artist") == "Tester", z
 
-    assert cmd("a2 setvol 6200 40 40") == "a2 OK" and zone()["volume"] == 40
-    assert cmd("a3 getvol 6200") == "a3 OK 40"
-    assert cmd("a4 setmut 6200 ON") == "a4 OK" and cmd("a5 getmut 6200") == "a5 OK ON"
-    assert cmd("a6 setvol 6299 10 10") == "a6 NO no such zone"
+    assert cmd("a2 setvol 6200 40 40") == "a2 OK setvol" and zone()["volume"] == 40
+    assert cmd("a3 getvol 6200") == "a3 getvol 40" and f.readline().rstrip("\r\n") == "a3 OK getvol"
+    assert cmd("a4 setmut 6200 ON") == "a4 OK setmut" and cmd("a5 getmut 6200") == "a5 getmut ON" and f.readline().rstrip("\r\n") == "a5 OK getmut"
+    assert cmd("a6 setvol 6299 10 10") == "a6 setvol no such zone" and f.readline().rstrip("\r\n") == "a6 NO setvol"
     assert cmd("a7 bogus") == "a7 BAD bogus unknown command"
     assert cmd("lonely") == "* BAD expected: <tag> <command> [args]"
 
@@ -82,7 +82,7 @@ try:
     v = json.load(urllib.request.urlopen(req))
     assert v["volume"] == 70 and not v["muted"], v
 
-    assert cmd("a8 session session_cmd, cmd=(int)2, port=(int)6200") == "a8 OK session_reply;"
+    assert cmd("a8 session session_cmd, cmd=(int)2, port=(int)6200") == "a8 session session_reply;" and f.readline().rstrip("\r\n") == "a8 OK session"
     assert not zone()["playing"]
     print("selfcheck OK")
 finally:

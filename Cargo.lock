@@ -106,6 +106,7 @@ dependencies = [
  "axum",
  "gstreamer",
  "gstreamer-net",
+ "sddp",
  "serde",
  "serde_json",
  "tokio",
@@ -643,6 +644,16 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "sddp"
+version = "0.1.0"
+source = "git+https://github.com/The1TrueJoe/sddp?rev=f1cbff62e434eec6558a2f83b07dd4b62cd60576#f1cbff62e434eec6558a2f83b07dd4b62cd60576"
+dependencies = [
+ "socket2",
+ "thiserror",
+ "tokio",
+]
 
 [[package]]
 name = "serde"
