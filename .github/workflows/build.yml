@@ -1,0 +1,59 @@
+name: build
+
+# c4-audio-client.c4z (the demo driver, built with Control4's driver packager) is an
+# artifact of every run and is attached to a release when one is published.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  driver:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Driver self-check (Lua 5.1, as on the controller)
+        working-directory: driver
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends lua5.1 && lua5.1 test.lua
+      - uses: control4/drivers-driverpackager@v1
+        with:
+          projectDir: driver
+          c4zproj: c4-audio-client.c4zproj
+          outputDir: ./out
+          version: ${{ github.run_number }}
+          updateModified: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: c4-audio-client-c4z
+          path: driver/out/c4-audio-client.c4z
+          if-no-files-found: error
+
+  client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, unit tests, end-to-end self-check
+        run: docker build -t c4ac . && docker run --rm c4ac
+
+  release:
+    if: github.event_name == 'release'
+    needs: [driver, client]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: c4-audio-client-c4z
+          path: dist
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" dist/c4-audio-client.c4z --clobber --repo "${{ github.repository }}"

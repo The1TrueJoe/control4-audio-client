@@ -79,7 +79,13 @@ Control4 streams to a project device whose driver has:
 
 `driver/` is a demo driver with that shape: one input, four outputs (zones
 6200–6203), and room-selection connections that carry room volume and mute to the
-client. Build it with `driver/package.sh` (check it with `cd driver && lua test.lua`).
+client. Download `c4-audio-client.c4z` from the
+[latest release](https://github.com/The1TrueJoe/control4-audio-client/releases/latest).
+CI builds it with Control4's
+[driver packager](https://github.com/control4/drivers-driverpackager) from
+`driver/c4-audio-client.c4zproj`. To build it locally, clone the packager and run
+`python3 drivers-driverpackager/dp3/driverpackager.py driver driver/out c4-audio-client.c4zproj`
+(needs `lxml`). Check the driver with `cd driver && lua test.lua`.
 
 **Discovery.** The client announces itself over SDDP as `c4ac:audio_client`, the
 driver's `search_type`. Add the driver in Composer Pro, and Director binds its IP
