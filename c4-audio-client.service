@@ -1,0 +1,16 @@
+[Unit]
+Description=Control4 digital audio client
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/c4-audio-client /etc/c4-audio-client.toml
+Restart=always
+RestartSec=2
+DynamicUser=yes
+SupplementaryGroups=audio
+# Real-time-ish scheduling helps ALSA under load.
+Nice=-10
+
+[Install]
+WantedBy=multi-user.target

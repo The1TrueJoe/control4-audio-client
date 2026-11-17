@@ -1,0 +1,21 @@
+# /etc/c4-audio-client.toml
+#
+# One [[zone]] per output. `port` is the Control4 output id the zone answers for
+# (6200, 6201, ...); the driver in your project must expose the same ids.
+
+# control = "0.0.0.0:6100"   # Control4's streamer connects here; leave at 6100
+# api = "127.0.0.1:6180"     # local HTTP API (zones, volume, now-playing, events)
+# latency_ms = 1200          # Control4's default; 300..3000
+
+[[zone]]
+port = 6200
+name = "Output 1"
+device = "zone1"             # ALSA device: "hw:0,0", or a name from /etc/asound.conf
+# offset_ms = 0              # fine-tune lip-sync / multi-room alignment
+# volume = 50                # start-up volume
+# max_volume = 100
+
+[[zone]]
+port = 6201
+name = "Output 2"
+device = "zone2"

@@ -1,0 +1,17 @@
+[package]
+name = "c4-audio-client"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Open Control4 OS3 digital audio endpoint: multi-zone, ALSA out, local HTTP control"
+
+[dependencies]
+anyhow = "1"
+axum = "0.7"
+gst = { package = "gstreamer", version = "0.23" }
+gst-net = { package = "gstreamer-net", version = "0.23" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+toml = "0.8"

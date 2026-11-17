@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<devicedata>
+  <copyright>Copyright 2026 Joseph Telaak</copyright>
+  <creator>Joseph Telaak</creator>
+  <name>Audio Client (Open)</name>
+  <manufacturer>Open Source</manufacturer>
+  <model>c4-audio-client</model>
+  <created>2026-11-17</created>
+  <modified>2026-11-17</modified>
+  <version>1</version>
+  <control>lua_gen</control>
+  <controlmethod>ip</controlmethod>
+  <driver>DriverWorks</driver>
+  <!-- The client announces this Type over SDDP, so Composer lists the box as
+       discovered and binds the IP Connection (6001) to it. -->
+  <search_types>
+    <type>c4ac:audio_client</type>
+  </search_types>
+  <composer_categories>
+    <category>Audio/Video</category>
+  </composer_categories>
+
+  <!-- Shaped like Control4's own controllers on the input side (one Digital Audio
+       Client) and like its IP amps on the output side. Output N (4000+N) plays the
+       client's zone 6200+N: keep the zones in the client config in this order. -->
+  <capabilities>
+    <can_switch>True</can_switch>
+    <has_discrete_volume_control>True</has_discrete_volume_control>
+    <has_up_down_volume_control>True</has_up_down_volume_control>
+    <has_discrete_mute_control>True</has_discrete_mute_control>
+    <has_toggle_mute_control>True</has_toggle_mute_control>
+    <has_discrete_input_select>True</has_discrete_input_select>
+    <audio_consumer_count>1</audio_consumer_count>
+    <audio_provider_count>4</audio_provider_count>
+    <video_consumer_count>0</video_consumer_count>
+    <video_provider_count>0</video_provider_count>
+  </capabilities>
+
+  <proxies>
+    <proxy proxybindingid="5001" primary="True" name="Audio Client">avswitch</proxy>
+  </proxies>
+
+  <connections>
+    <connection><id>5001</id><facing>6</facing><connectionname>Audio Client</connectionname>
+      <type>2</type><consumer>False</consumer><audiosource>False</audiosource>
+      <videosource>False</videosource><linelevel>False</linelevel>
+      <classes><class><classname>AVSWITCH</classname></class></classes><hidden>True</hidden></connection>
+
+    <!-- The box. Filled in by SDDP discovery, or set by hand on Composer's Network tab.
+         6100 is the client's control port; Control4's streamer uses it too. -->
+    <connection><id>6001</id><facing>6</facing><connectionname>IP Connection</connectionname>
+      <type>4</type><consumer>True</consumer><audiosource>False</audiosource>
+      <videosource>False</videosource><linelevel>True</linelevel>
+      <classes><class><classname>TCP</classname><ports><port>
+        <name>Audioclient</name><number>6100</number><auto_connect>True</auto_connect>
+        <monitor_connection>True</monitor_connection><keep_connection>True</keep_connection>
+        <keep_alive>True</keep_alive><delimiter>0d0a</delimiter>
+      </port></ports></class></classes></connection>
+
+    <!-- Binds itself to Digital Media's "Digital Audio" output, like a controller's. -->
+    <connection proxybindingid="5001"><id>3000</id><facing>6</facing>
+      <connectionname>Digital Audio Client</connectionname><type>6</type>
+      <consumer>True</consumer><audiosource>False</audiosource><videosource>False</videosource>
+      <linelevel>True</linelevel>
+      <classes><class><autobind>True</autobind><classname>DIGITAL_AUDIO_CLIENT</classname></class></classes></connection>
+
+    <connection proxybindingid="5001"><id>4000</id><facing>6</facing><connectionname>Audio Output 1</connectionname><type>6</type><consumer>False</consumer><audiosource>True</audiosource><videosource>False</videosource><linelevel>True</linelevel><classes><class><classname>STEREO</classname></class><class><classname>SPEAKER</classname></class></classes></connection>
+    <connection proxybindingid="5001"><id>4001</id><facing>6</facing><connectionname>Audio Output 2</connectionname><type>6</type><consumer>False</consumer><audiosource>True</audiosource><videosource>False</videosource><linelevel>True</linelevel><classes><class><classname>STEREO</classname></class><class><classname>SPEAKER</classname></class></classes></connection>
+    <connection proxybindingid="5001"><id>4002</id><facing>6</facing><connectionname>Audio Output 3</connectionname><type>6</type><consumer>False</consumer><audiosource>True</audiosource><videosource>False</videosource><linelevel>True</linelevel><classes><class><classname>STEREO</classname></class><class><classname>SPEAKER</classname></class></classes></connection>
+    <connection proxybindingid="5001"><id>4003</id><facing>6</facing><connectionname>Audio Output 4</connectionname><type>6</type><consumer>False</consumer><audiosource>True</audiosource><videosource>False</videosource><linelevel>True</linelevel><classes><class><classname>STEREO</classname></class><class><classname>SPEAKER</classname></class></classes></connection>
+
+    <!-- Bind a room here to make this output that room's speakers (volume follows). -->
+    <connection proxybindingid="5001"><id>7000</id><facing>6</facing><connectionname>Room Selection 1</connectionname><type>7</type><consumer>False</consumer><audiosource>True</audiosource><videosource>False</videosource><linelevel>True</linelevel><classes><class><classname>AUDIO_SELECTION</classname></class><class><classname>AUDIO_VOLUME</classname></class></classes></connection>
+    <connection proxybindingid="5001"><id>7001</id><facing>6</facing><connectionname>Room Selection 2</connectionname><type>7</type><consumer>False</consumer><audiosource>True</audiosource><videosource>False</videosource><linelevel>True</linelevel><classes><class><classname>AUDIO_SELECTION</classname></class><class><classname>AUDIO_VOLUME</classname></class></classes></connection>
+    <connection proxybindingid="5001"><id>7002</id><facing>6</facing><connectionname>Room Selection 3</connectionname><type>7</type><consumer>False</consumer><audiosource>True</audiosource><videosource>False</videosource><linelevel>True</linelevel><classes><class><classname>AUDIO_SELECTION</classname></class><class><classname>AUDIO_VOLUME</classname></class></classes></connection>
+    <connection proxybindingid="5001"><id>7003</id><facing>6</facing><connectionname>Room Selection 4</connectionname><type>7</type><consumer>False</consumer><audiosource>True</audiosource><videosource>False</videosource><linelevel>True</linelevel><classes><class><classname>AUDIO_SELECTION</classname></class><class><classname>AUDIO_VOLUME</classname></class></classes></connection>
+  </connections>
+
+  <config>
+    <script file="driver.lua"/>
+    <properties>
+      <property><name>Status</name><type>STRING</type><readonly>true</readonly><default>not bound</default></property>
+      <property><name>Last Command</name><type>STRING</type><readonly>true</readonly><default></default></property>
+      <property><name>Last Reply</name><type>STRING</type><readonly>true</readonly><default></default></property>
+      <property><name>Last Proxy Command</name><type>STRING</type><readonly>true</readonly><default></default></property>
+      <property><name>Debug</name><type>LIST</type><items><item>Off</item><item>On</item></items><default>On</default></property>
+    </properties>
+  </config>
+</devicedata>
