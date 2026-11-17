@@ -308,7 +308,7 @@ impl Zone {
             "rtpbin name=rb latency={lat} buffer-mode=synced do-retransmission=true rtp-profile=avpf \
              udpsrc {addr}port={rtp_port} caps=\"{RTP_CAPS}\" ! rb.recv_rtp_sink_0 \
              rb.send_rtcp_src_0 ! udpsink host={peer} port={rtcp} sync=false async=false \
-             rb. ! rtpgstdepay ! flacparse ! flacdec ! audioconvert ! audioresample ! volume name=vol ! {sink} name=out",
+             rb. ! rtpgstdepay name=depay ! flacparse ! flacdec ! audioconvert ! audioresample ! volume name=vol ! {sink} name=out",
             lat = self.latency_ms,
             rtcp = s.rtcp,
         )
@@ -344,6 +344,23 @@ impl Zone {
             }
             (Some(clock), None) => pipeline.use_clock(Some(&clock)),
             (None, _) => eprintln!("zone {}: no Control4 clock; playing unsynchronised", self.cfg.port),
+        }
+
+        if let Some(pad) = pipeline.by_name("depay").and_then(|d| d.static_pad("sink")) {
+            pad.add_probe(gst::PadProbeType::BUFFER, |_, info| {
+                if let Some(gst::PadProbeData::Buffer(buf)) = &mut info.data {
+                    let fixed = buf.map_readable().ok().and_then(|m| strip_c4_timestamp(&m));
+                    if let Some(bytes) = fixed {
+                        let mut nb = gst::Buffer::from_mut_slice(bytes);
+                        let w = nb.get_mut().expect("new buffer is writable");
+                        w.set_pts(buf.pts());
+                        w.set_dts(buf.dts());
+                        w.set_flags(buf.flags());
+                        *buf = nb;
+                    }
+                }
+                gst::PadProbeReturn::Ok
+            });
         }
 
         let bus = self.watch(pipeline.bus().expect("pipeline has a bus"));
@@ -388,9 +405,47 @@ impl Zone {
     }
 }
 
+/// Control4's streamer marks the first fragment of each frame with bit 0 of byte 2 of
+/// the `rtpgstpay` header and puts an 8-byte big-endian timestamp (ns) between the header
+/// and the data; its fragment offsets do not count those 8 bytes. Stock `rtpgstdepay`
+/// knows neither, so it drops every frame. Returns the packet in stock framing, or `None`
+/// if it is already stock.
+// ponytail: the timestamp is discarded; RTP timestamps carry the timing. Use it if
+// multi-room alignment turns out to need it.
+fn strip_c4_timestamp(pkt: &[u8]) -> Option<Vec<u8>> {
+    let cc = usize::from(*pkt.first()? & 0x0f);
+    let mut p = 12 + 4 * cc;
+    if pkt[0] & 0x10 != 0 {
+        let words = u16::from_be_bytes([*pkt.get(p + 2)?, *pkt.get(p + 3)?]);
+        p += 4 + 4 * usize::from(words);
+    }
+    if *pkt.get(p + 2)? & 0x01 == 0 || pkt.len() < p + 16 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(pkt.len() - 8);
+    out.extend_from_slice(&pkt[..p + 8]);
+    out[p + 2] &= !0x01;
+    out.extend_from_slice(&pkt[p + 16..]);
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strips_control4_frame_timestamp() {
+        // First fragment of a frame from a live Control4 OS 3.3 streamer (first 40 bytes).
+        let hex = "8060b356c8f7ccaa7302db43000001000000000000000338c429f624fff85a8ce980a0e11807e63a";
+        let pkt: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
+        let out = strip_c4_timestamp(&pkt).unwrap();
+        assert_eq!(out.len(), pkt.len() - 8);
+        assert_eq!(&out[..12], &pkt[..12], "RTP header untouched");
+        assert_eq!(&out[12..20], &[0, 0, 0, 0, 0, 0, 0, 0], "flag cleared, frag offset 0");
+        assert_eq!(&out[20..22], &[0xff, 0xf8], "FLAC frame sync follows the header");
+        // Later fragments (and stock rtpgstpay) pass through.
+        assert!(strip_c4_timestamp(&out).is_none());
+    }
 
     #[test]
     fn parses_session_cmd() {
