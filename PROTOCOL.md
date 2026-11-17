@@ -1,161 +1,135 @@
-# Control4 OS3 "audio3" streaming protocol
+# Control4 OS3 digital audio: the client interface
 
-Reverse-engineered from a Control4 EA-3's factory root filesystem (OS 3.3.0.628678):
-`/control4/bin/audio3{client,server,streamer,clock}` (i586, stripped, C++/boost/
-GStreamer 1.10.3).
-
-No Control4 code is reproduced here, only names, constants and message shapes.
+This describes the network interface between a Control4 OS3 system and a digital
+audio endpoint: what crosses the wire, and what a driver must declare so Director
+streams to the endpoint. It was worked out for interoperability, by observing
+Control4 equipment the author owns. It covers only the interface needed to build a
+compatible endpoint. No Control4 software, files or code are included in this repo.
 
 ## Pieces
 
-| Process | Runs on | Role | Port |
-|---|---|---|---|
-| `control4_digitalaudio.c4l` | director | decides what plays where | — |
-| `audio3server` | director host | stream manager, spawns one streamer per stream | TCP **6000** |
-| `audio3streamer` | director host | GStreamer source -> FLAC -> RTP; connects *to* each client | per-stream RTCP + clock ports from a pool |
-| `audio3clock` | director host | master `GstNetTimeProvider` | UDP **6002** (`NETCLOCK_PORT`) |
-| `audio3client` | every endpoint | receives RTP, plays through ALSA | TCP **6100** |
+| Role | Runs on | Port |
+|---|---|---|
+| Digital Media (decides what plays where) | Director | — |
+| Audio stream server | Director's host | TCP 6000 |
+| Per-stream streamer: source → FLAC → RTP; connects *to* each endpoint | Director's host | per-stream RTCP and clock ports |
+| Master network clock (`GstNetTimeProvider`) | Director's host | UDP 6002 |
+| **Endpoint** (this project) | each audio device | **TCP 6100** |
 
-Ports come from the device `.c4i` (`opt/control4/var/drivers/c4i/control4_ea3.c4i`),
-class `TCP`: `Audioserver 6000`, `Audioclient 6100`, both CRLF (`<delimiter>0d0a`).
-**Plain TCP, no TLS.**
-
-Flow:
+The control channels are plain TCP with CRLF line endings, no TLS.
 
 ```
-digitalaudio --addstr/addmed/addcli/setsta--> audio3server:6000
-audio3server --spawns--> audio3streamer --stream --master --rtcp --clock --mcast
-audio3streamer --TCP--> client:6100   "<tag> session session_cmd, cmd=0, ..."
-audio3streamer --RTP/UDP (FLAC in rtpgstpay)--> client
-client --RTCP--> streamer:<rtcp>
-client --GstNetClientClock--> sclock (stream clock) / director:6002 (master)
+Digital Media ──(adds the endpoint to a stream)──▶ stream server :6000
+stream server ──starts──▶ streamer
+streamer ──TCP──▶ endpoint:6100      "<tag> session session_cmd, cmd=0, ..."
+streamer ──RTP/UDP (FLAC in rtpgstpay)──▶ endpoint
+endpoint ──RTCP──▶ streamer:<rtcp>
+endpoint ──network clock──▶ sclock (stream clock), or Director's host :6002
 ```
 
-`addcli` args (streamer side, `AudioStreamer::cmdAddCli`): `STREAM_INDEX CLIENT PORT`:
-stream index, the client address, and the client's output port (strtol).
+## Control channel (endpoint listens on TCP 6100)
 
-## Control channel (client listens on TCP 6100)
-
-IMAP-style, line-based, CRLF terminated:
+Tagged lines, in the style of IMAP:
 
 ```
--> <tag> <command> [args...]\r\n          args split on ' ' (PARAM_DELIMETER = 0x20)
-<- <tag> OK [data]\r\n                   success  (fmt "{} {} {}" / "{} {}", OK|NO)
-<- <tag> NO <message>\r\n                handled, but failed
-<- <tag> BAD <command> <message>\r\n      failure  (fmt "{} BAD {} {}")
-<- * BAD Missing command or tag.\r\n      line with < 2 tokens
-<- * SYS <EVENT>=...\r\n                  unsolicited event (e.g. "* SYS ADVANCMNT=")
+-> <tag> <command> [args...]\r\n        args separated by single spaces
+<- <tag> OK [data]\r\n                 success
+<- <tag> NO <message>\r\n              understood, but failed
+<- <tag> BAD <command> <message>\r\n   unknown command or wrong arguments
+<- * BAD <message>\r\n                 line without a tag and a command
+<- * SYS <EVENT>=...\r\n               unsolicited event
 ```
 
-Commands are lowercased before lookup. The streamer sends `PING` as a keepalive
-(10 s timeout); it expects a reply. Error strings it understands:
-`Unsupported command.`, `Wrong number of arguments.`.
+Commands are case-insensitive. The streamer sends `PING` as a keepalive and expects
+a reply within about 10 s. Message text after `OK`/`NO`/`BAD` is free-form.
 
-### Client command table (from `audio3client` registration)
+### Commands
 
 | cmd | args | notes |
 |---|---|---|
-| `session` | `CMD` (one serialized GstStructure) | **the important one**, see below |
-| `addch` | `PORT` | add an output channel (port = output id, 6200..6206) |
-| `remch` | `PORT` | |
-| `setvol` | `PORT LEFT RIGHT` | 0-100; L≠R is averaged |
-| `getvol` | `PORT` | |
-| `setmut` | `PORT STATE` | ON/OFF |
+| `session` | one serialized GstStructure | **the important one**, see below |
+| `addch` / `remch` | `PORT` | add/remove an output channel (port = output id, 6200+) |
+| `setvol` | `PORT LEFT RIGHT` | 0–100 |
+| `getvol` | `PORT` | replies with the level |
+| `setmut` | `PORT STATE` | `ON`/`OFF` |
 | `getmut` / `togmut` | `PORT` | |
 | `setmaxvol` / `getmaxvol` | `PORT VALUE` / `PORT` | |
-| `ramp` | `PORT DIR` | UP/DOWN/OFF |
-| `getparam` / `setparam` | `[PORT]:KEY [VALUE]` | keys: `latency`, `latency_profile` (default/higher/highest/custom), … |
+| `ramp` | `PORT DIR` | `UP`/`DOWN`/`OFF` |
+| `getparam` / `setparam` | `[PORT]:KEY [VALUE]` | e.g. `latency`, `latency_profile` |
 | `listparams`, `status`, `vers`, `reset`, `initialize` | | |
-| `prepadvancmnt` / `playadvancmnt` / `finadvancmnt` | `FILE_URL DATA MAX_AUDIO_SECONDS FILE_TIME_STAMP` / `START_TIME` | announcements; replies with `* SYS ADVANCMNT=ADV_PREP_COMPLETED` etc. |
-| `alsasetvol` / `alsarampvol` / `alsaenablevol` | | ALSA-element volume |
-| `getdisablehdmiaudio` / `setdisablehdmiaudio` | `STATE` | |
+| `prepadvancmnt` / `playadvancmnt` / `finadvancmnt` | | timed announcements; progress via `* SYS ADVANCMNT=...` |
 
-For a minimal client: `session`, `PING`, `addch`/`remch`, `setvol`/`getvol`,
-`setmut`/`getmut`/`togmut`, `status`, `vers`. Reply OK to the rest.
+A minimal endpoint needs `session` and `PING`, and should answer the volume/mute
+commands. Replying `OK` to the rest is enough.
 
-### `session` payload
+### `session`
 
-The argument is `gst_structure_to_string()` output; parse it with `gst_structure_from_string`
-(or a small parser). Built by the streamer (`Session::...`, `session.cpp`):
+The argument is a serialized GstStructure (`gst_structure_from_string` parses it):
 
 ```
 session_cmd, cmd=(int)0, port=(int)6200, rtcp=(int)<streamer rtcp port>,
-             btime=(guint64)<pipeline base time ns>, sclock=(string)"<host>:<port>"
+             btime=(guint64)<pipeline base time, ns>, sclock=(string)"<host>:<port>"
              [, mcast=(string)"<group>:<port>"]
 ```
 
 | `cmd` | meaning | fields |
 |---|---|---|
-| 0 | PLAY stream | port, rtcp, btime, sclock, [mcast] |
-| 2 | STOP stream | port |
-| 4 | PLAY announcement | same as 0 |
-| 5 | STOP announcement | port |
-| 1, 3 | unused by the streamer (client accepts them as non-PLAY) | |
+| 0 | play stream | port, rtcp, btime, sclock, [mcast] |
+| 2 | stop stream | port |
+| 4 | play announcement | as 0 |
+| 5 | stop announcement | port |
 
-Client behaviour (`AudioClient::handleSessionCmd`): a PLAY for a port that already
-has an active PLAY tears the old one down first. Success reply carries a
-`session_reply` structure (`gst_structure_new_empty("session_reply")` + fields, serialized).
-Failure strings: `Unable to parse session info.`, `Session command failed.`,
-`Invalid configuration`.
+A play for a port that is already playing replaces the old stream. The endpoint
+answers `<tag> OK session_reply;` (a serialized, possibly empty, `session_reply`
+structure).
 
 ## Media
 
-- **Codec:** FLAC (`flacenc` -> `audio/x-flac, framed=true`), stereo, 44.1/48/96/192 kHz,
-  16/24 bit (quality setting; default 48000, `C4_DEFAULT_QUALITY`=1).
-- **Payload:** GStreamer's own `rtpgstpay`, PT 96, `encoding-name=X-GST`, clock-rate 90000.
-  Caps travel in-band (base64 in the `caps=` field of the RTP caps), e.g.
-  `audio/x-flac, channels=2, framed=true, rate=44100, layout=interleaved, channel-mask=0x3`.
-  Receiver: `rtpgstdepay ! flacdec`.
-- **RTP session:** `rtpbin` with `rtp-profile=avpf`, `do-retransmission=true` (RTX via
-  `rtprtxreceive`, PT map `application/x-rtp-pt-map`), `buffer-mode=synced`,
-  `latency` = 1200 ms by default (300..3000). RTCP to the streamer's `rtcp` port.
-- **Multicast:** optional `mcast` group; client funnels unicast and multicast RTP into one
-  `rtpbin` input.
-- **Announcements:** port + `ANNOUNCEMENT_PORT_OFFSET` (100).
+- **Codec:** FLAC, stereo, 44.1–192 kHz, 16/24 bit.
+- **Payload:** GStreamer's `rtpgstpay` (payload type 96, `encoding-name=X-GST`,
+  clock-rate 90000). The FLAC caps travel in-band; receive with
+  `rtpgstdepay ! flacparse ! flacdec`.
+- **RTP session:** `rtpbin` with `rtp-profile=avpf`, retransmission requests on,
+  `buffer-mode=synced`, latency around 1200 ms (300–3000). RTCP goes to the
+  streamer's `rtcp` port.
+- **Multicast:** optional, when the session carries `mcast`.
+- **Announcements:** arrive on the zone's port + 100.
 
 ## Now-playing metadata
 
-`audio3streamer` turns source metadata (title/artist/album, `c4audio` "expedited
-metadata") into GStreamer tag events and sends them into its distribution pipeline.
-`rtpgstpay` serializes tag events into the RTP stream, so they reach the client
-in-band: `rtpgstdepay` re-emits them and they surface as `GST_MESSAGE_TAG` on the
-bus. The stock client ignores them. Cover art and the director's own now-playing
-(service, queue) are not in the stream; those come from the director's API.
+Source metadata (title, artist, album) rides in the RTP stream as GStreamer tag
+events: `rtpgstpay` serializes them, `rtpgstdepay` re-emits them, and they show up as
+tag messages on the receiving pipeline's bus. Cover art and Director's own
+now-playing information (service, queue) are not in the stream.
 
-## Clock / sync
+## Clock and sync
 
-Plain GStreamer network-synchronised playback:
+Standard GStreamer network-synchronised playback:
 
-- Clock protocol is stock `GstNetTimeProvider`: 16-byte UDP packets, two big-endian
-  u64 nanosecond timestamps (local send time, remote time). Easy to implement natively.
-- Master clock: `audio3clock --mport 6002` on the director host (rate-smoothed, see
-  `/etc/clock_sync.conf`). Per-stream clock: `sclock` from the session.
-- Client: `pipeline.use_clock(GstNetClientClock(sclock))`, `set_base_time(btime)`,
-  `set_start_time(NONE)`, then PLAYING once the clock reports synced.
-- `/etc/audio_sync.conf` holds per-model/per-port/rate/bit-depth render offsets (ns), e.g.
-  `ea3,6200,48000,24,8,113750`. Our client needs its own equivalent knob.
+- The clock protocol is `GstNetTimeProvider`: 16-byte UDP packets carrying two
+  big-endian u64 nanosecond timestamps.
+- The endpoint sets its pipeline clock to a `GstNetClientClock` on `sclock` (or
+  Director's host :6002 when `sclock` is absent), sets the base time to `btime` and
+  the start time to none, and plays once the clock is synced.
+- Each output needs a small render-offset adjustment to line up with other rooms;
+  this client exposes it as `offset_ms` per zone.
 
-## How the director picks a client (open question, biggest risk)
+## What a driver must declare
 
-A client is a project device whose driver declares:
+Director streams to a project device whose driver declares:
 
-- a `TCP` network class with a port named `Audioclient`, number `6100`, and
-- a consumer connection of class `DIGITAL_AUDIO_CLIENT` (EA3: id 3003, autobind), which
-  binds to the Digital Media driver's `DIGITAL_AUDIO_CLIENT` (id 4000).
+- a network connection with a TCP port named `Audioclient`, number 6100;
+- one consumer connection of class `DIGITAL_AUDIO_CLIENT` (type 6, autobind),
+  which binds to Digital Media's digital audio output;
+- its audio output connections. **The endpoint port is 6200 + the output's index**,
+  counting the device's audio outputs in order (three outputs: 6200–6202).
 
-`libc4libdriverbases.so` (`C4BaseController::SetAudioClientState`,
-`SetAudioClientFromBinding`, `OnConnectionStatusChanged_AudioClient`) is how Control4's
-own controller drivers turn the local `audio3client` on/off via sysman when a binding
-exists. Still unverified: whether a third-party driver (DriverWorks `.c4z`) that
-declares the same connection + port is enough for `digitalaudio` to `addcli` it.
-If not, the fallback is to present as an existing Control4 endpoint type.
+`driver/` is an example. Still unconfirmed: whether Director treats a third-party
+driver with this shape the same way as Control4's own devices.
 
-## Still to confirm on the wire (capture on a stock controller)
+## Still to confirm on the wire
 
-Capture `tcp port 6100 or tcp port 6000 or udp` while playing a stream to that room:
-
-1. Exact tag format the streamer uses, and what it reads from `session_reply`.
-2. Which UDP port the client receives RTP on (the `port` value itself, or a derived one)
-   and where its RTCP-in lives. The decompile drops these arguments.
-3. `sclock` string format (expected `host:port`).
-4. Full `addcli` line from digitalaudio to `audio3server`.
+1. Which UDP port the endpoint receives RTP on. This client assumes the session's
+   `port` itself.
+2. What, if anything, the streamer reads from `session_reply`.
+3. The exact `sclock` format (assumed `host:port`).

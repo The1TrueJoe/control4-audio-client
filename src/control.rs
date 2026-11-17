@@ -36,25 +36,25 @@ async fn conn(sock: TcpStream, peer: IpAddr, zones: &Arc<Zones>) -> std::io::Res
 }
 
 fn no_channel() -> String {
-    "Channel not found.".into()
+    "no such zone".into()
 }
 
 fn on_off(s: Option<&&str>) -> Result<bool, String> {
     match s.map(|s| s.to_ascii_uppercase()).as_deref() {
         Some("ON") => Ok(true),
         Some("OFF") => Ok(false),
-        _ => Err("Bad mute state value".into()),
+        _ => Err("state must be ON or OFF".into()),
     }
 }
 
 fn percent(s: Option<&&str>) -> Result<u8, String> {
-    s.and_then(|v| v.parse::<u8>().ok()).filter(|v| *v <= 100).ok_or_else(|| "Bad volume value (0-100).".into())
+    s.and_then(|v| v.parse::<u8>().ok()).filter(|v| *v <= 100).ok_or_else(|| "volume must be 0-100".into())
 }
 
 pub async fn handle(line: &str, peer: IpAddr, zones: &Arc<Zones>) -> String {
     let mut parts = line.splitn(3, ' ');
     let (Some(tag), Some(cmd)) = (parts.next(), parts.next().filter(|c| !c.is_empty())) else {
-        return "* BAD Missing command or tag.".into();
+        return "* BAD expected: <tag> <command> [args]".into();
     };
     let rest = parts.next().unwrap_or("").trim();
     let args: Vec<&str> = rest.split_whitespace().collect();
@@ -67,7 +67,7 @@ pub async fn handle(line: &str, peer: IpAddr, zones: &Arc<Zones>) -> String {
                     .await
                     .unwrap_or_else(|e| Err(e.to_string()))
                     .map(|_| "session_reply;".into()),
-                None => Err("Invalid port specified.".into()),
+                None => Err("no zone for this port".into()),
             },
             Err(e) => Err(e),
         },
@@ -76,7 +76,7 @@ pub async fn handle(line: &str, peer: IpAddr, zones: &Arc<Zones>) -> String {
         "addch" | "remch" => zone().map(|_| String::new()),
         "setvol" => zone().and_then(|z| {
             let (l, r) = (percent(args.get(1))?, percent(args.get(2).or(args.get(1)))?);
-            z.set_volume(((u16::from(l) + u16::from(r)) / 2) as u8); // stock client averages L/R too
+            z.set_volume(((u16::from(l) + u16::from(r)) / 2) as u8); // one level per zone: average L and R
             Ok(String::new())
         }),
         "getvol" => zone().map(|z| z.view().volume.to_string()),
@@ -86,7 +86,7 @@ pub async fn handle(line: &str, peer: IpAddr, zones: &Arc<Zones>) -> String {
         "togmut" => zone().map(|z| z.set_muted(!z.view().muted)).map(|_| String::new()),
         "getmut" => zone().map(|z| if z.view().muted { "ON" } else { "OFF" }.into()),
         "ramp" => zone().map(|z| z.ramp(args.get(1).copied().unwrap_or("OFF"))).map(|_| String::new()),
-        _ => return format!("{tag} BAD {cmd} Unsupported command."),
+        _ => return format!("{tag} BAD {cmd} unknown command"),
     };
     match result {
         Ok(d) if d.is_empty() => format!("{tag} OK"),

@@ -71,9 +71,9 @@ try:
     assert cmd("a2 setvol 6200 40 40") == "a2 OK" and zone()["volume"] == 40
     assert cmd("a3 getvol 6200") == "a3 OK 40"
     assert cmd("a4 setmut 6200 ON") == "a4 OK" and cmd("a5 getmut 6200") == "a5 OK ON"
-    assert cmd("a6 setvol 6299 10 10") == "a6 NO Channel not found."
-    assert cmd("a7 bogus") == "a7 BAD bogus Unsupported command."
-    assert cmd("lonely") == "* BAD Missing command or tag."
+    assert cmd("a6 setvol 6299 10 10") == "a6 NO no such zone"
+    assert cmd("a7 bogus") == "a7 BAD bogus unknown command"
+    assert cmd("lonely") == "* BAD expected: <tag> <command> [args]"
 
     req = urllib.request.Request(
         "http://127.0.0.1:6180/api/zones/6200", data=b'{"volume": 70, "muted": false}',

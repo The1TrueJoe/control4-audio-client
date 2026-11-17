@@ -9,7 +9,7 @@ state, volume and now-playing to whatever manages the box.
   and pipeline, so one box can play different sources in different rooms or the
   same source in sync.
 - **Synchronised.** It plays on Control4's network clock at the stream's base time,
-  using the same GStreamer recipe as the stock client, so it stays in step with
+  using standard GStreamer network-synchronised playback, so it stays in step with
   Control4 endpoints in other rooms.
 - **Now-playing.** Tags carried in the stream (title, artist, album, ...) show up
   per zone.
@@ -17,6 +17,13 @@ state, volume and now-playing to whatever manages the box.
   HTTP API sets the same values locally and pushes every change as an event.
 
 How the protocol works: [PROTOCOL.md](PROTOCOL.md).
+
+> **Unofficial.** This is an independent project, not affiliated with, endorsed by
+> or supported by Control4 or its owner. "Control4" and related names are
+> trademarks of their respective owner and are used here only to say what this
+> software works with. The protocol was documented for interoperability; no
+> Control4 software, files or code are included. Use it on systems you own or
+> manage, at your own risk.
 
 ## Run
 

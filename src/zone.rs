@@ -16,8 +16,8 @@ use tokio_stream::StreamExt;
 const NETCLOCK_PORT: u16 = 6002;
 /// Announcements arrive on the zone's port + this.
 const ANNOUNCEMENT_PORT_OFFSET: u16 = 100;
-/// rtpgstpay framing. Caps normally travel in-band; this default (FLAC 44.1k stereo) is the
-/// same fallback the stock client carries, for packets that arrive before the in-band caps.
+/// rtpgstpay framing. Caps normally travel in-band; this default (base64 of FLAC 44.1k stereo
+/// caps) covers packets that arrive before the in-band caps.
 const RTP_CAPS: &str = "application/x-rtp,media=application,clock-rate=90000,encoding-name=X-GST,payload=96,capsversion=0,caps=YXVkaW8veC1mbGFjLCBjaGFubmVscz0oaW50KTIsIGZyYW1lZD0oYm9vbGVhbil0cnVlLCByYXRlPShpbnQpNDQxMDAsIGxheW91dD0oc3RyaW5nKWludGVybGVhdmVkLCBjaGFubmVsLW1hc2s9KGJpdG1hc2spMHgwMDAwMDAwMDAwMDAwMDAz";
 
 #[derive(Deserialize, Clone)]
@@ -62,13 +62,13 @@ pub struct Session {
 impl Session {
     /// Parses the serialized `session_cmd` GstStructure the streamer sends.
     pub fn parse(s: &str) -> Result<Self, String> {
-        let st = gst::Structure::from_str(s.trim()).map_err(|_| "Unable to parse session info.".to_string())?;
+        let st = gst::Structure::from_str(s.trim()).map_err(|_| "session is not a valid structure".to_string())?;
         let int = |k: &str| st.get::<i32>(k).ok();
         let port_of = |k: &str| int(k).and_then(|p| u16::try_from(p).ok()).filter(|p| *p != 0);
-        let cmd = int("cmd").ok_or("Unable to parse session command.")?;
-        let port = port_of("port").ok_or("Port is invalid.")?;
+        let cmd = int("cmd").ok_or("session has no cmd")?;
+        let port = port_of("port").ok_or("session port is missing or invalid")?;
         let play = cmd == 0 || cmd == 4;
-        let rtcp = if play { port_of("rtcp").ok_or("Rtcp port is invalid.")? } else { 0 };
+        let rtcp = if play { port_of("rtcp").ok_or("play session needs an rtcp port")? } else { 0 };
         Ok(Session {
             cmd,
             port,
@@ -194,7 +194,7 @@ impl Zone {
     /// Applies volume to the running pipeline and tells API subscribers.
     fn changed(&self, i: &Inner) {
         if let Some(vol) = i.play.as_ref().and_then(|p| p.pipeline.by_name("vol")) {
-            // Cubic taper: 0-100 feels even across the range, like the stock streamer's "cubic".
+            // Cubic taper: 0-100 feels even across the range, a common audio volume curve.
             let linear = f64::from(i.volume.min(i.max_volume)) / 100.0;
             vol.set_property("volume", linear.powi(3));
             vol.set_property("mute", i.muted);
@@ -280,7 +280,7 @@ impl Zone {
                 i.play = None;
                 i.main.clone()
             }
-            _ => return Err("Session command failed.".into()),
+            _ => return Err("unknown session cmd".into()),
         };
         match resume {
             Some(s) => self.start(&s, peer),
@@ -296,7 +296,7 @@ impl Zone {
             format!("alsasink device={}", self.cfg.device.as_deref().unwrap_or("default"))
         });
         // ponytail: RTP on the session port (or the mcast group) and no RTCP-in socket; the
-        // stock client's exact socket layout is unconfirmed until a capture (see PROTOCOL.md).
+        // exact socket layout is unconfirmed until a capture (see PROTOCOL.md).
         let (addr, rtp_port) = match s.mcast.rsplit_once(':').and_then(|(g, p)| Some((g, p.parse::<u16>().ok()?))) {
             Some((group, port)) => (format!("address={group} "), port),
             None => (String::new(), s.port),
