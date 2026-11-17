@@ -95,8 +95,13 @@ The streamer sends `PING` about every 10 s on the same connection.
 
 - **Codec:** FLAC, stereo, 44.1–192 kHz, 16/24 bit.
 - **Payload:** GStreamer's `rtpgstpay` (payload type 96, `encoding-name=X-GST`,
-  clock-rate 90000). The FLAC caps travel in-band; receive with
-  `rtpgstdepay ! flacparse ! flacdec`.
+  clock-rate 90000), **with a Control4 extension**: the first fragment of each frame
+  sets bit 0 of byte 2 of the 8-byte `rtpgstpay` header (a field stock GStreamer
+  keeps zero) and carries an 8-byte big-endian timestamp in nanoseconds between the
+  header and the data. The fragment offsets do not count those 8 bytes. Stock
+  `rtpgstdepay` rejects every such frame, so strip the 8 bytes and clear the bit
+  first, then `rtpgstdepay ! flacparse ! flacdec`. Frames are about 96 ms, sent as
+  1380-byte packets.
 - **RTP session:** `rtpbin` with `rtp-profile=avpf`, retransmission requests on,
   `buffer-mode=synced`, latency around 1200 ms (300–3000). RTCP goes to the
   streamer's `rtcp` port.
@@ -153,10 +158,13 @@ handy way to test an endpoint by hand.
   with `addstr`/`addmed`.
 - The reply format, the quoted session argument, the `sclock` format, and master
   clock sync.
+- Real-time, synchronised playback at the right pitch (48 kHz, Control4's
+  `quality 48K/24`) once the timestamp extension above is stripped.
 
 ## Still open
 
 1. Director does not yet add this endpoint to a stream by itself. With a room's
    endpoint set to the demo driver, Digital Media created a stream but never
    loaded a source or subscribed the endpoint.
-2. Whether `btime` is on the master clock's timeline or only the stream clock's.
+2. Whether the per-stream clock (`sclock`) answers in some other mode. Playing on the
+   master clock with the session's `btime` works.
