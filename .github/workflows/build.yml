@@ -21,7 +21,9 @@ jobs:
       - name: Driver self-check (Lua 5.1, as on the controller)
         working-directory: driver
         run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends lua5.1 && lua5.1 test.lua
-      - uses: control4/drivers-driverpackager@v1
+      # The repo's last commit (it is archived): the v1 tag predates the version and
+      # updateModified inputs and silently ignores them.
+      - uses: control4/drivers-driverpackager@c491b3e7e42c012fd2aad8aad3e0b9851e8488cc
         with:
           projectDir: driver
           c4zproj: c4-audio-client.c4zproj
