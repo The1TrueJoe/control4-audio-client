@@ -122,11 +122,15 @@ Standard GStreamer network-synchronised playback:
 - The clock protocol is `GstNetTimeProvider`. Requests are the standard 16 bytes
   (two big-endian u64 nanosecond timestamps); Control4's master clock answers with
   20: the same 16 plus a 4-byte trailer. Stock `GstNetClientClock` syncs to it.
-- On a live controller the per-stream `sclock` port did not answer at all, so this
-  client falls back to the master clock on Director's host, port 6002.
-- The endpoint sets its pipeline clock to a `GstNetClientClock` on `sclock` (or
-  Director's host :6002 when `sclock` is absent), sets the base time to `btime` and
-  the start time to none, and plays once the clock is synced.
+- Control4's streamers (`audio3streamer --master 127.0.0.1`) and clients all slave to
+  the master `audio3clock` on port 6002 (PID-tuned by `/etc/clock_sync.conf`). The
+  per-stream `sclock` a session names is never served on an EA controller — no
+  per-stream `audio3clock` is ever spawned — and `btime` is on the master timeline
+  (it tracks the controller's uptime).
+- So the endpoint sets its pipeline clock to a `GstNetClientClock` on the streamer's
+  host :6002 (`sclock` only if that doesn't answer), sets the base time to `btime` and
+  the start time to none, and plays once the clock is synced. That is what keeps rooms
+  in sync.
 - Each output needs a small render-offset adjustment to line up with other rooms;
   this client exposes it as `offset_ms` per zone.
 

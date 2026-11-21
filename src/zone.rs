@@ -12,7 +12,7 @@ use tokio::sync::broadcast;
 use tokio::task::AbortHandle;
 use tokio_stream::StreamExt;
 
-/// Control4's master clock (audio3clock) port, used when a session names no stream clock.
+/// Control4's master clock (audio3clock) port on the streamer's host: what every client syncs to.
 const NETCLOCK_PORT: u16 = 6002;
 /// Announcements arrive on the zone's port + this.
 const ANNOUNCEMENT_PORT_OFFSET: u16 = 100;
@@ -326,14 +326,12 @@ impl Zone {
             out.set_property("ts-offset", self.cfg.offset_ms * 1_000_000);
         }
 
-        // Play on Control4's clock. btime is a base time on the clock the streamer named
-        // WITH it, so it is only valid paired with that exact clock — never carried onto a
-        // fallback (doing so leaves the sink unable to map running-time and it never prerolls).
-        //  - Dictated stream clock (sclock, native flow): try ONLY it, briefly. If it syncs,
-        //    use it and apply btime. If it does not (e.g. a per-stream provider that a raw
-        //    addcli never brought up — seen live as .139:6008 answering nothing), DROP btime
-        //    and play on the pipeline's own clock: unsynced but audible, not stalled.
-        //  - No dictated clock: fall back to the master net clock on the streamer's host.
+        // Play on Control4's clock, which is how rooms stay in sync. Control4's streamers
+        // and clients all slave to the master audio3clock on the streamer's host (:6002,
+        // tuned by /etc/clock_sync.conf), and btime is on that timeline (it tracks the
+        // controller's uptime). The per-stream sclock a session names is never served on
+        // an EA controller, and trying it first cost 1.5 s on every start — so the master
+        // goes first and sclock is only the fallback. btime applies on either.
         let try_sync = |host: &str, port: u16, timeout: gst::ClockTime| {
             let clock = gst_net::NetClientClock::new(None, host, i32::from(port), gst::ClockTime::ZERO);
             let ok = clock.wait_for_sync(timeout).is_ok();
@@ -341,26 +339,17 @@ impl Zone {
             ok.then_some(clock)
         };
         let dictated = s.sclock.rsplit_once(':').and_then(|(h, p)| Some((h.to_string(), p.parse::<u16>().ok()?)));
-        match dictated {
-            // Short timeout: a live provider syncs fast on a LAN, and a dead one must not
-            // stall preroll — we want audible playback quickly either way.
-            Some((host, port)) => match try_sync(&host, port, gst::ClockTime::from_mseconds(1500)) {
-                Some(clock) => {
-                    pipeline.use_clock(Some(&clock));
-                    if let Some(b) = s.btime {
-                        pipeline.set_base_time(gst::ClockTime::from_nseconds(b));
-                        pipeline.set_start_time(gst::ClockTime::NONE);
-                    }
+        let clock = try_sync(&peer.to_string(), NETCLOCK_PORT, gst::ClockTime::from_seconds(2))
+            .or_else(|| dictated.and_then(|(h, p)| try_sync(&h, p, gst::ClockTime::from_mseconds(1500))));
+        match clock {
+            Some(clock) => {
+                pipeline.use_clock(Some(&clock));
+                if let Some(b) = s.btime {
+                    pipeline.set_base_time(gst::ClockTime::from_nseconds(b));
+                    pipeline.set_start_time(gst::ClockTime::NONE);
                 }
-                None => eprintln!(
-                    "zone {}: dictated clock {host}:{port} dead; playing unsynchronised (btime dropped)",
-                    self.cfg.port
-                ),
-            },
-            None => match try_sync(&peer.to_string(), NETCLOCK_PORT, gst::ClockTime::from_seconds(3)) {
-                Some(clock) => pipeline.use_clock(Some(&clock)),
-                None => eprintln!("zone {}: no Control4 clock; playing unsynchronised", self.cfg.port),
-            },
+            }
+            None => eprintln!("zone {}: no Control4 clock answers; playing unsynchronised", self.cfg.port),
         }
 
         if let Some(pad) = pipeline.by_name("depay").and_then(|d| d.static_pad("sink")) {
